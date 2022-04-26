@@ -28,28 +28,33 @@ func New(w io.Writer) *Alog {
 	if w == nil {
 		w = os.Stdout
 	}
+
+	message := make(chan string)
+	errorMessage := make(chan error, 0)
+	mutex := &sync.Mutex{}
+	shutdown := make(chan struct{})
+	shutdownComplete := make(chan struct{})
+
 	return &Alog{
 		dest:               w,
-		msgCh:              make(chan string),
-		errorCh:            make(chan error),
-		m:                  &sync.Mutex{},
-		shutdownCh:         make(chan struct{}),
-		shutdownCompleteCh: make(chan struct{}),
+		m:                  mutex,
+		msgCh:              message,
+		errorCh:            errorMessage,
+		shutdownCh:         shutdown,
+		shutdownCompleteCh: shutdownComplete,
 	}
 }
 
 // Start begins the message loop for the asynchronous logger. It should be initiated as a goroutine to prevent
 // the caller from being blocked.
 func (al Alog) Start() {
-	wg := &sync.WaitGroup{}
 loop:
 	for {
 		select {
 		case msg := <-al.msgCh:
-			wg.Add(1)
-			go al.write(msg, wg)
+			go al.Write(msg)
+
 		case <-al.shutdownCh:
-			wg.Wait()
 			al.shutdown()
 			break loop
 		}
@@ -64,14 +69,12 @@ func (al Alog) formatMessage(msg string) string {
 }
 
 func (al Alog) write(msg string, wg *sync.WaitGroup) {
-	defer wg.Done()
+	message := al.formatMessage(msg)
 	al.m.Lock()
 	defer al.m.Unlock()
-	_, err := al.dest.Write([]byte(al.formatMessage(msg)))
+	_, err := al.dest.Write([]byte(message))
 	if err != nil {
-		go func(err error) {
-			al.errorCh <- err
-		}(err)
+		go func(err error) { al.errorCh <- err }(err)
 	}
 }
 
@@ -81,6 +84,7 @@ func (al Alog) shutdown() {
 }
 
 // MessageChannel returns a channel that accepts messages that should be written to the log.
+// send-only channel
 func (al Alog) MessageChannel() chan<- string {
 	return al.msgCh
 }
@@ -88,6 +92,7 @@ func (al Alog) MessageChannel() chan<- string {
 // ErrorChannel returns a channel that will be populated when an error is raised during a write operation.
 // This channel should always be monitored in some way to prevent deadlock goroutines from being generated
 // when errors occur.
+// receive-only chanel
 func (al Alog) ErrorChannel() <-chan error {
 	return al.errorCh
 }
@@ -95,8 +100,6 @@ func (al Alog) ErrorChannel() <-chan error {
 // Stop shuts down the logger. It will wait for all pending messages to be written and then return.
 // The logger will no longer function after this method has been called.
 func (al Alog) Stop() {
-	al.shutdownCh <- struct{}{}
-	<-al.shutdownCompleteCh
 }
 
 // Write synchronously sends the message to the log output
