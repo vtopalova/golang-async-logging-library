@@ -73,7 +73,7 @@ func (al Alog) MessageChannel() chan<- string {
 }
 
 // ErrorChannel returns a channel that will be populated when an error is raised during a write operation.
-// This channel should always be monitored in some way to prevent deadlock goroutines from being generated
+// This channel should always be monitored in some way to prevent deadlock goroutines from being generated.
 // when errors occur.
 // receive-only chanel
 func (al Alog) ErrorChannel() <-chan error {
